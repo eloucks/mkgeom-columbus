@@ -1,0 +1,109 @@
+#! /bin/csh -f
+
+#Trap to delete temporary files if quit early
+onintr emergency_cleanup
+
+# Initial input definition
+if ( $#argv == 0 ) then 
+	goto error1
+else
+	set LOG = $argv[1]
+endif
+
+
+#Input error messages
+if ( $#argv > 1 ) goto error2
+if ( ! -e $argv[1] ) then
+	if ( $LOG == -h ) then
+		echo ""
+		echo "Hello! This script was designed to create geom files for COLUMBUS jobs using the .log file output by a Gaussian geometry optimization.  This particular script works for ONLY C2v symmetry molecules. Additionally, the number of atoms in the system must be less than 50. This script was written by Eric Loucks. If it's not working, ask him for help!"
+		echo ""
+		echo "The format of a  mkgeom command is: mkgeom file_name.log"
+		echo ""
+		exit
+	endif 
+	goto error3
+endif
+goto input
+
+error1:
+	echo "Error: No file was specified. Type "mkgeom -h" for help."
+	exit
+error2:
+	echo "Error: Too many arguments. Type "mkgeom -h" for help."
+	exit
+error3:
+	echo "Error: Specified file does not exist"
+	exit
+error4:
+        echo "Error: Non-zero X coordinates found. Molecule not in plane or is not C2v symmetry"
+        goto emergency_cleanup
+
+#Input sorting
+input:
+	#File called .mkgeom_temp_matrix containing matrix of info from log file created
+	grep -A 500 "Optimization completed." $LOG | sed -n '/Standard orientation/,/Rotational constants/p' | head -n -2 | sed -n '6,$p' > .mkgeom_temp_matrix
+
+	#Checks to make sure each x-coordinate is 0
+        foreach line ( "`cat .mkgeom_temp_matrix`" )
+                if ( `echo $line | awk '{print $4}' | tr -d . | bc` != 0 ) goto error4
+        end
+
+	#Removes lines where the Y value is negative (non-unique coordinates)
+	foreach line ( "`cat .mkgeom_temp_matrix`" )
+		if ( `echo $line | awk '{print $5}' | tr -d . | bc` < 0 ) then
+			echo "STATUS: Duplicate atom found, moving on"
+		else
+			echo "$line" >> .mkgeom_temp_removedmatrix
+		endif
+	end
+
+
+#Unit conversion, and decimal place correction
+cat .mkgeom_temp_removedmatrix | awk '{print $2, $4, $5, $6}' | sort -k1 -rn | awk '{y=$3*1.889725989;$3=y;z=$4*1.889725989;$4=z; printf "%s", $1; printf " "; printf "%.8f", $2; printf " "; printf "%.8f", $3; printf " "; printf "%.8f\n", $4}' > .mkgeom_temp_pregeom
+
+
+#Geom Creation
+foreach line ( "`cat .mkgeom_temp_pregeom`" )
+	if ( `echo $line | awk '{print $4}' | tr -d . | bc` < 0 ) then 
+		echo "$line" | awk ' \
+			$1 == 1 {print " " "H    ", $1 ".0", "  ", $2, "  ", $3, " ", $4, "   1.00782504"}\
+			$1 == 2 {print " " "He   ", $1 ".0", "  ", $2, "  ", $3, " ", $4, "   4.00260325"}\
+			$1 == 3 {print " " "Li   ", $1 ".0", "  ", $2, "  ", $3, " ", $4, "   7.01600455"}\
+			$1 == 4 {print " " "Be   ", $1 ".0", "  ", $2, "  ", $3, " ", $4, "   9.01218224"}\
+			$1 == 5 {print " " "B    ", $1 ".0", "  ", $2, "  ", $3, " ", $4, "  11.00930544"}\
+			$1 == 6 {print " " "C    ", $1 ".0", "  ", $2, "  ", $3, " ", $4, "  12.00000000"}\
+			$1 == 7 {print " " "N    ", $1 ".0", "  ", $2, "  ", $3, " ", $4, "  14.00307401"}\
+			$1 == 8 {print " " "O    ", $1 ".0", "  ", $2, "  ", $3, " ", $4, "  15.99491462"}\
+			$1 == 9 {print " " "F    ", $1 ".0", "  ", $2, "  ", $3, " ", $4, "  18.99840322"} ' >> geom
+	else
+		echo "$line" | awk ' \
+                        $1 == 1 {print " " "H    ", $1 ".0", "  ", $2, "  ", $3, "  ", $4, "   1.00782504"}\
+                        $1 == 2 {print " " "He   ", $1 ".0", "  ", $2, "  ", $3, "  ", $4, "   4.00260325"}\
+                        $1 == 3 {print " " "Li   ", $1 ".0", "  ", $2, "  ", $3, "  ", $4, "   7.01600455"}\
+                        $1 == 4 {print " " "Be   ", $1 ".0", "  ", $2, "  ", $3, "  ", $4, "   9.01218224"}\
+                        $1 == 5 {print " " "B    ", $1 ".0", "  ", $2, "  ", $3, "  ", $4, "  11.00930544"}\
+                        $1 == 6 {print " " "C    ", $1 ".0", "  ", $2, "  ", $3, "  ", $4, "  12.00000000"}\
+                        $1 == 7 {print " " "N    ", $1 ".0", "  ", $2, "  ", $3, "  ", $4, "  14.00307401"}\
+                        $1 == 8 {print " " "O    ", $1 ".0", "  ", $2, "  ", $3, "  ", $4, "  15.99491462"}\
+                        $1 == 9 {print " " "F    ", $1 ".0", "  ", $2, "  ", $3, "  ", $4, "  18.99840322"} ' >> geom
+	endif
+end
+echo "STATUS: geom created successfully"
+
+
+#Normal termination clean up
+echo "STATUS: Normal termination. Deleting temporary files."
+rm .mkgeom_temp_matrix
+rm .mkgeom_temp_removedmatrix
+rm .mkgeom_temp_pregeom
+echo "Finished. Have a nice day!"
+exit
+
+
+#Error Clean up
+emergency_cleanup:
+	rm .mkgeom_temp_matrix
+	rm .mkgeom_temp_removedmatrix
+	rm .mkgeom_temp_pregeom
+	echo "Error: premature script termination. Temporary files have been deleted"
