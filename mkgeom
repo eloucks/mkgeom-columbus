@@ -3,13 +3,17 @@
 #Trap to delete temporary files if quit early
 onintr emergency_cleanup
 
+echo ""
+echo "Make Geom 1.1 - By Eric Loucks"
+echo ""
+
 # Initial input definition
 if ( $#argv == 0 ) then 
 	goto error1
 else
 	set LOG = $argv[1]
 endif
-
+#########################################################################################
 
 #Input error messages
 if ( $#argv > 1 ) goto error2
@@ -27,42 +31,82 @@ endif
 goto input
 
 error1:
-	echo "Error: No file was specified. Type "mkgeom -h" for help."
-	exit
-error2:
-	echo "Error: Too many arguments. Type "mkgeom -h" for help."
-	exit
-error3:
-	echo "Error: Specified file does not exist"
-	exit
-error4:
-        echo "Error: Non-zero X coordinates found. Molecule not in plane or is not C2v symmetry"
-        goto emergency_cleanup
+echo "Error: No file was specified. Type "mkgeom -h" for help."
+exit
 
+error2:
+echo "Error: Too many arguments. Type "mkgeom -h" for help."
+exit
+
+error3:
+echo "Error: Specified file does not exist"
+exit
+
+error4:
+echo "Error: Molecule is not in XY, YZ, or XZ planes or is not C2v symmetry"
+goto emergency_cleanup
+
+#####################################################################################
 #Input sorting
 input:
-	#File called .mkgeom_temp_matrix containing matrix of info from log file created
-	grep -A 500 "Optimization completed." $LOG | sed -n '/Standard orientation/,/Rotational constants/p' | head -n -2 | sed -n '6,$p' > .mkgeom_temp_matrix
 
-	#Checks to make sure each x-coordinate is 0
-        foreach line ( "`cat .mkgeom_temp_matrix`" )
-                if ( `echo $line | awk '{print $4}' | tr -d . | bc` != 0 ) goto error4
-        end
+#File called .mkgeom_temp_matrix containing matrix of info from log file created
+grep -A 500 "Optimization completed." $LOG | sed -n '/Standard orientation/,/Rotational constants/p' | head -n -2 | sed -n '6,$p' > .mkgeom_temp_matrix
 
-	#Removes lines where the Y value is negative (non-unique coordinates)
-	foreach line ( "`cat .mkgeom_temp_matrix`" )
-		if ( `echo $line | awk '{print $5}' | tr -d . | bc` < 0 ) then
-			echo "STATUS: Duplicate atom found, moving on"
-		else
-			echo "$line" >> .mkgeom_temp_removedmatrix
-		endif
-	end
+#Checks to make sure the optimization completed by seeing if .mkgeom_tem_matrix is 0 in size
+if (-z ./.mkgeom_temp_matrix) then
+	echo "STATUS: Optimization did not converge. Initiating premature exit"
+	goto emergency_cleanup
+else
+	echo "STATUS: Optimized Geometry found."
+endif
+
+######################################################################################
+#Checks which plane the molecule is in by checking which coordinate columb is all 0
+foreach line ( "`cat .mkgeom_temp_matrix`" )
+	set xcol = `echo $line | awk '{print $4}' | tr -d . | bc`
+        if ( $xcol < -9 || $xcol > 9 ) goto testxyplane
+end
+echo "STATUS: Molecule is in YZ plane. Removing atoms duplicated across mirror plane."
+set plane = YZ
+goto remove_duplicates
+
+testxyplane:
+foreach line ( "`cat .mkgeom_temp_matrix`" )
+        set zcol = `echo $line | awk '{print $6}' | tr -d . | bc`
+        if ( $zcol < -9 || $zcol > 9 ) goto testxzplane
+end
+echo "STATUS: Molecule is in XY plane. Removing atoms duplicated across mirror plane."
+set plane = XY
+goto remove_duplicates
+
+testxzplane:
+foreach line ( "`cat .mkgeom_temp_matrix`" )
+        set ycol = `echo $line | awk '{print $5}' | tr -d . | bc`
+        if ( $ycol < -9 || $ycol > 9 ) goto error4
+end
+echo "STATUS: Molecule is in XZ plane. Removing atoms duplicated across mirror plane."
+set plane = XZ
+
+
+#####################################################################################
+#Removes lines where the Y value is negative (non-unique coordinates)
+remove_duplicates:
+goto emergency_cleanup
+ 
+foreach line ( "`cat .mkgeom_temp_matrix`" )
+	if ( `echo $line | awk '{print $5}' | tr -d . | bc` < 0 ) then
+		echo "STATUS: Duplicate atom found, moving on"
+	else
+		echo "$line" >> .mkgeom_temp_removedmatrix
+	endif
+end
 
 
 #Unit conversion, and decimal place correction
 cat .mkgeom_temp_removedmatrix | awk '{print $2, $4, $5, $6}' | sort -k1 -rn | awk '{y=$3*1.889725989;$3=y;z=$4*1.889725989;$4=z; printf "%s", $1; printf " "; printf "%.8f", $2; printf " "; printf "%.8f", $3; printf " "; printf "%.8f\n", $4}' > .mkgeom_temp_pregeom
 
-
+##########################################################################################################################
 #Geom Creation
 foreach line ( "`cat .mkgeom_temp_pregeom`" )
 	if ( `echo $line | awk '{print $4}' | tr -d . | bc` < 0 ) then 
@@ -91,19 +135,18 @@ foreach line ( "`cat .mkgeom_temp_pregeom`" )
 end
 echo "STATUS: geom created successfully"
 
+##########################################################################################################################
 
 #Normal termination clean up
 echo "STATUS: Normal termination. Deleting temporary files."
-rm .mkgeom_temp_matrix
-rm .mkgeom_temp_removedmatrix
-rm .mkgeom_temp_pregeom
+rm .mkgeom_temp_matrix .mkgeom_temp_removedmatrix .mkgeom_temp_pregeom
 echo "Finished. Have a nice day!"
 exit
 
 
 #Error Clean up
 emergency_cleanup:
-	rm .mkgeom_temp_matrix
-	rm .mkgeom_temp_removedmatrix
-	rm .mkgeom_temp_pregeom
-	echo "Error: premature script termination. Temporary files have been deleted"
+if ( -e ./.mkgeom_temp_matrix ) rm .mkgeom_temp_matrix
+if ( -e ./.mkgeom_temp_removedmatrix ) rm .mkgeom_temp_removedmatrix
+if ( -e ./.mkgeom_temp_pregeom ) rm .mkgeom_temp_pregeom
+echo "Error: Premature script termination. Temporary files have been deleted"
